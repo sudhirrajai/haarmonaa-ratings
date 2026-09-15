@@ -70,11 +70,15 @@ const submitSchema = z.object({
   image_url: z.string().max(500).nullish(),
 });
 
+import { isAutoApproveEnabled } from "./admin-settings.server";
+
 export const submitReview = createServerFn({ method: "POST" })
   .validator((data: unknown) => submitSchema.parse(data))
   .handler(async ({ data }) => {
     const db = getDb();
     const id = crypto.randomUUID();
+    const autoApprove = await isAutoApproveEnabled();
+
     await db.insert(schema.reviews).values({
       id,
       name: data.name,
@@ -84,7 +88,14 @@ export const submitReview = createServerFn({ method: "POST" })
       rating: data.rating,
       comment: data.comment,
       image_url: data.image_url ?? null,
-      status: "approved", // Auto-approved on submission
+      status: autoApprove ? "approved" : "pending",
     });
-    return { id, message: "Review published successfully." };
+
+    return {
+      id,
+      status: autoApprove ? "approved" : "pending",
+      message: autoApprove
+        ? "Thank you! Your review has been published."
+        : "Thank you! Your review has been submitted and will appear after approval.",
+    };
   });

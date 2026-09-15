@@ -5,7 +5,7 @@ import {
   Loader2, Plus, Trash2, Eye, EyeOff, LogOut,
   CheckCircle, XCircle, Pencil, BarChart3,
   Star, Clock, ThumbsUp, ThumbsDown, Package,
-  Search, Filter,
+  Search, Filter, X, ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,12 +24,14 @@ import {
   toggleCategory,
   deleteCategory,
 } from "@/lib/admin-categories.server";
+import { getAutoApprove, setAutoApprove } from "@/lib/admin-settings.server";
 import { adminLogout } from "@/lib/admin-auth.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -255,6 +257,22 @@ function ReviewsTab() {
     );
   });
 
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+
+  const autoApproveQuery = useQuery({
+    queryKey: ["admin-auto-approve"],
+    queryFn: () => getAutoApprove(),
+  });
+
+  const toggleAutoApprove = useMutation({
+    mutationFn: (enabled: boolean) => setAutoApprove({ data: { enabled } }),
+    onSuccess: (res) => {
+      toast.success(res.enabled ? "Auto-approve is now ENABLED" : "Auto-approve is now DISABLED");
+      void queryClient.invalidateQueries({ queryKey: ["admin-auto-approve"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const approveAllMutation = useMutation({
     mutationFn: () => approveAllPending(),
     onSuccess: () => { toast.success("All pending reviews approved!"); refresh(); },
@@ -307,6 +325,36 @@ function ReviewsTab() {
           </p>
         </div>
       )}
+
+      {/* Auto-Approve Setting Card */}
+      <div className="panel flex flex-wrap items-center justify-between gap-3 p-4 border-primary/30">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary border border-primary/20">
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-foreground">Auto-Approve New Reviews</span>
+              <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${autoApproveQuery.data?.enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+                {autoApproveQuery.data?.enabled ? "Active (Auto-Publish)" : "Manual Approval Required"}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {autoApproveQuery.data?.enabled
+                ? "Reviews and photos posted by customers are published immediately on the website."
+                : "New reviews will be held in 'Pending' until you click Approve."}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="auto-approve-toggle"
+            checked={autoApproveQuery.data?.enabled ?? true}
+            disabled={toggleAutoApprove.isPending}
+            onCheckedChange={(checked) => toggleAutoApprove.mutate(checked)}
+          />
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
@@ -381,7 +429,34 @@ function ReviewsTab() {
             <div className="px-4 py-3">
               <p className="text-sm text-muted-foreground leading-relaxed">{review.comment}</p>
               {review.image_url && (
-                <p className="mt-2 text-xs text-muted-foreground/60">📷 Photo attached</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setLightboxImg(review.image_url)}
+                    className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-primary/30 shadow-md transition-all hover:border-primary focus:outline-none"
+                  >
+                    <img
+                      src={review.image_url}
+                      alt={`Photo by ${review.name}`}
+                      loading="lazy"
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                      <Eye size={20} className="text-white drop-shadow" />
+                    </span>
+                  </button>
+                  <div>
+                    <span className="text-xs font-semibold text-foreground">Attached Photo</span>
+                    <p className="text-[11px] text-muted-foreground">Click the thumbnail to view full resolution</p>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxImg(review.image_url)}
+                      className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-border/80 bg-secondary/50 px-2.5 py-0.5 text-xs text-primary transition-colors hover:bg-secondary hover:underline"
+                    >
+                      <Eye size={12} /> View Full Image
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -450,6 +525,32 @@ function ReviewsTab() {
           onClose={() => setEditingReview(null)}
           onSave={(data) => editMutation.mutate(data)}
         />
+      )}
+
+      {/* Lightbox Photo Modal */}
+      {lightboxImg && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          onClick={() => setLightboxImg(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightboxImg}
+              alt="Review photo"
+              className="max-h-[85vh] w-auto max-w-full rounded-2xl object-contain shadow-2xl border border-primary/30"
+            />
+            <button
+              type="button"
+              onClick={() => setLightboxImg(null)}
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-foreground shadow-lg border border-border hover:bg-secondary"
+              aria-label="Close photo preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

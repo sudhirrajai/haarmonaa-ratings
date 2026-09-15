@@ -41,3 +41,10 @@ export const admins = mysqlTable("admins", {
   password_hash: varchar("password_hash", { length: 255 }).notNull(),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+export const settings = mysqlTable("settings", {
+  key: varchar("key", { length: 80 }).primaryKey(),
+  value: text("value").notNull(),
+});
+
