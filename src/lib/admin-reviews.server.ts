@@ -49,6 +49,19 @@ export const approveReview = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+// ─── Approve all pending reviews ─────────────────────────────────────────────
+
+export const approveAllPending = createServerFn({ method: "POST" })
+  .middleware([requireAdminAuth])
+  .handler(async () => {
+    const db = getDb();
+    await db
+      .update(schema.reviews)
+      .set({ status: "approved" })
+      .where(eq(schema.reviews.status, "pending"));
+    return { success: true };
+  });
+
 // ─── Reject a review ──────────────────────────────────────────────────────────
 
 export const rejectReview = createServerFn({ method: "POST" })

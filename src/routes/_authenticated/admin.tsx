@@ -16,6 +16,7 @@ import {
   editReview,
   deleteReview,
   getReviewStats,
+  approveAllPending,
 } from "@/lib/admin-reviews.server";
 import {
   adminGetCategories,
@@ -254,6 +255,12 @@ function ReviewsTab() {
     );
   });
 
+  const approveAllMutation = useMutation({
+    mutationFn: () => approveAllPending(),
+    onSuccess: () => { toast.success("All pending reviews approved!"); refresh(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <div className="space-y-6">
       {/* Stats bar */}
@@ -265,12 +272,25 @@ function ReviewsTab() {
             { label: "Approved", value: stats.data.approved, icon: ThumbsUp, color: "text-emerald-500" },
             { label: "Rejected", value: stats.data.rejected, icon: ThumbsDown, color: "text-red-500" },
           ].map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="panel flex items-center gap-3 p-4">
-              <Icon size={20} className={color} />
-              <div>
-                <p className="text-xs text-muted-foreground">{label}</p>
-                <p className="text-2xl font-semibold">{value}</p>
+            <div key={label} className="panel flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <Icon size={20} className={color} />
+                <div>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="text-2xl font-semibold">{value}</p>
+                </div>
               </div>
+              {label === "Pending" && value > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
+                  onClick={() => approveAllMutation.mutate()}
+                  disabled={approveAllMutation.isPending}
+                >
+                  Approve All
+                </Button>
+              )}
             </div>
           ))}
         </div>

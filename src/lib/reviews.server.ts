@@ -84,7 +84,7 @@ export const submitReview = createServerFn({ method: "POST" })
       rating: data.rating,
       comment: data.comment,
       image_url: data.image_url ?? null,
-      status: "pending",
+      status: "approved", // Auto-approved on submission
     });
-    return { id, message: "Review submitted — it will appear once approved." };
+    return { id, message: "Review published successfully." };
   });

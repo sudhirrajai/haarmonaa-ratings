@@ -11,10 +11,13 @@ import { writeFile, mkdir } from "fs/promises";
 import { join, extname } from "path";
 import * as crypto from "crypto";
 import { z } from "zod";
+import { ensureEnvLoaded } from "./env.server";
+
+ensureEnvLoaded();
 
 // Resolve the uploads directory relative to the project root (process.cwd())
 // In dev: <project>/public/uploads/
-// In production (Nitro/Cloudflare/Node): configure UPLOADS_DIR env to an absolute path
+// In production: configure UPLOADS_DIR env to an absolute path, or defaults to <project>/public/uploads
 function getUploadsDir(): string {
   return process.env["UPLOADS_DIR"] ?? join(process.cwd(), "public", "uploads");
 }
@@ -39,9 +42,6 @@ export const uploadImage = createServerFn({ method: "POST" })
     const uploadsDir = getUploadsDir();
     const fullPath = join(uploadsDir, filename);
 
-    // Ensure uploads directory exists (like Laravel's storage:link)
-    await mkdir(uploadsDir, { recursive: true });
-
     // Decode base64 → binary buffer
     const buffer = Buffer.from(data.base64, "base64");
 
@@ -50,8 +50,17 @@ export const uploadImage = createServerFn({ method: "POST" })
       throw new Error("File too large. Maximum size is 10 MB.");
     }
 
-    await writeFile(fullPath, buffer);
+    try {
+      // Ensure uploads directory exists (like Laravel's storage:link)
+      await mkdir(uploadsDir, { recursive: true });
+      await writeFile(fullPath, buffer);
+      console.log(`[Upload] File saved to: ${fullPath}`);
+    } catch (err: unknown) {
+      const e = err as Error;
+      console.error(`[Upload Error] Failed saving to ${fullPath}:`, e);
+      throw new Error(`Failed to save image to disk: ${e.message}`);
+    }
 
-    // Return the public URL path (served statically by Vite/Nitro)
+    // Return the public URL path (served statically by Nginx/Vite)
     return { url: `/uploads/${filename}` };
   });
