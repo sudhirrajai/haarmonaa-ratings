@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { Star, Upload, Loader2, Quote } from "lucide-react";
+import { Star, Upload, Loader2, Quote, QrCode, X, Sparkles, CheckCircle2 } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 
@@ -17,17 +17,17 @@ import heroImage from "@/assets/hero-jewellery.jpg";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Rate our Navratri handmade jewellery | Reviews" },
+      { title: "Haarmonaa | Customer Reviews & Ratings" },
       {
         name: "description",
         content:
-          "Scan, rate and review your handmade Navratri jewellery — kada, earrings, necklaces and more. Share a star rating, a few words and a photo of what you bought.",
+          "Scan, rate and review your Haarmonaa handmade jewellery — kada, earrings, necklaces and more. Share a star rating and a photo.",
       },
-      { property: "og:title", content: "Rate our Navratri handmade jewellery" },
+      { property: "og:title", content: "Haarmonaa | Customer Reviews & Ratings" },
       {
         property: "og:description",
         content:
-          "Share a star rating, a short review and a photo of your handmade jewellery purchase.",
+          "Share a star rating, a short review and a photo of your Haarmonaa jewellery purchase.",
       },
     ],
   }),
@@ -37,21 +37,11 @@ export const Route = createFileRoute("/")({
 const reviewSchema = z.object({
   name: z.string().trim().min(1, "Please add your name").max(100),
   email: z.string().trim().email("Please enter a valid email").max(255),
-  phone: z.string().trim().max(20).optional(),
+  phone: z.string().trim().max(20).nullish(),
   product: z.string().trim().min(1, "Pick what you bought").max(80),
   rating: z.number().int().min(1, "Please tap a star rating").max(5),
   comment: z.string().trim().min(1, "Please write a few words").max(1000),
 });
-
-type Review = {
-  id: string;
-  name: string;
-  product: string;
-  rating: number;
-  comment: string;
-  photo: string | null;
-  created_at: string;
-};
 
 /** Read a File as a base64 string (without the data:...;base64, prefix) */
 function fileToBase64(file: File): Promise<string> {
@@ -59,7 +49,6 @@ function fileToBase64(file: File): Promise<string> {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      // Strip the "data:image/jpeg;base64," prefix
       resolve(result.split(",")[1] ?? "");
     };
     reader.onerror = reject;
@@ -74,37 +63,46 @@ function Stars({ value, size = 16 }: { value: number; size?: number }) {
         <Star
           key={n}
           size={size}
-          className={n <= value ? "fill-gold text-gold" : "text-muted-foreground/40"}
+          className={n <= value ? "fill-gold text-gold" : "text-muted-foreground/30"}
         />
       ))}
     </div>
   );
 }
 
-function useApprovedReviews() {
-  return useQuery({
-    queryKey: ["reviews", "approved"],
-    queryFn: () => getApprovedReviews(),
-  });
-}
+const RATING_LABELS: Record<number, string> = {
+  1: "Needs improvement",
+  2: "Fair",
+  3: "Good",
+  4: "Very good",
+  5: "Loved it! Excellent",
+};
 
-function useActiveCategories() {
-  return useQuery({
-    queryKey: ["categories", "active"],
-    queryFn: () => getActiveCategories(),
-  });
-}
+const INITIAL_LIMIT = 8;
+const PAGE_STEP = 8;
 
 function Index() {
   const queryClient = useQueryClient();
-  const { data: reviews, isLoading } = useApprovedReviews();
-  const { data: categories } = useActiveCategories();
+  const [limit, setLimit] = useState(INITIAL_LIMIT);
+  const [lightboxImg, setLightboxImg] = useState<string | null>(null);
+
+  // Paginated reviews query with aggregate total & average
+  const { data: reviewsData, isLoading, isFetching } = useQuery({
+    queryKey: ["reviews", "approved", limit],
+    queryFn: () => getApprovedReviews({ data: { limit, offset: 0 } }),
+  });
+
+  const { data: categories } = useQuery({
+    queryKey: ["categories", "active"],
+    queryFn: () => getActiveCategories(),
+  });
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [product, setProduct] = useState("");
   const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
   const [comment, setComment] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -116,8 +114,10 @@ function Index() {
     "Maang tikka", "Hair accessory", "Other",
   ];
 
-  const count = reviews?.length ?? 0;
-  const average = count ? reviews!.reduce((s, r) => s + r.rating, 0) / count : 0;
+  const reviews = reviewsData?.reviews ?? [];
+  const totalCount = reviewsData?.total ?? 0;
+  const averageRating = reviewsData?.average ?? 0;
+  const hasMore = reviewsData?.hasMore ?? false;
 
   function onPickFile(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files?.[0] ?? null;
@@ -129,12 +129,20 @@ function Index() {
     setPreview(picked ? URL.createObjectURL(picked) : null);
   }
 
+  function removeFile() {
+    setFile(null);
+    setPreview(null);
+  }
+
   const submit = useMutation({
     mutationFn: async () => {
       const parsed = reviewSchema.safeParse({
-        name, email,
-        phone: phone || undefined,
-        product, rating, comment,
+        name,
+        email,
+        phone: phone || null,
+        product,
+        rating,
+        comment,
       });
       if (!parsed.success) {
         throw new Error(parsed.error.issues[0]?.message ?? "Please check the form");
@@ -143,7 +151,6 @@ function Index() {
       let imageUrl: string | null = null;
 
       if (file) {
-        // Convert to base64 and upload to local server — no cloud dependency
         const base64 = await fileToBase64(file);
         const result = await uploadImage({
           data: {
@@ -152,7 +159,7 @@ function Index() {
             filename: file.name,
           },
         });
-        imageUrl = result.url; // e.g. /uploads/abc.jpg
+        imageUrl = result.url;
       }
 
       await submitReview({
@@ -168,9 +175,15 @@ function Index() {
       });
     },
     onSuccess: () => {
-      toast.success("Thank you! Your review is pending approval and will appear shortly.");
-      setName(""); setEmail(""); setPhone(""); setProduct("");
-      setRating(0); setComment(""); setFile(null); setPreview(null);
+      toast.success("Thank you! Your review is submitted and will appear shortly after approval.");
+      setName("");
+      setEmail("");
+      setPhone("");
+      setProduct("");
+      setRating(0);
+      setComment("");
+      setFile(null);
+      setPreview(null);
       void queryClient.invalidateQueries({ queryKey: ["reviews"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -183,92 +196,98 @@ function Index() {
 
   return (
     <div className="min-h-screen">
-      {/* Top Brand Navigation */}
-      <nav className="sticky top-0 z-30 border-b border-border/40 bg-background/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
-          <Link to="/" className="flex items-center gap-3 transition-opacity hover:opacity-90">
-            <img
-              src="/logo-circle.png"
-              alt="Haarmonaa Monogram"
-              className="h-10 w-10 rounded-full border border-primary/40 shadow-sm"
-            />
-            <span className="font-serif text-xl tracking-[0.2em] font-semibold text-foreground">
-              HAARMONAA
-            </span>
-          </Link>
-          <div className="flex items-center gap-3">
-            <Link
-              to="/qr"
-              className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              QR Code
-            </Link>
-            <Link
-              to="/auth"
-              className="rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-            >
-              Admin
-            </Link>
-          </div>
-        </div>
-      </nav>
-
-      <header className="relative overflow-hidden">
-        <img
-          src={heroImage}
-          alt="Handmade jewellery with gold accents"
-          width={1600}
-          height={912}
-          className="h-[46vh] min-h-72 w-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/20" />
-        <div className="absolute inset-x-0 bottom-0 mx-auto max-w-3xl px-5 pb-8 text-center">
-          <div className="mb-4 flex justify-center">
+      {/* Top Brand Navigation — Clean & responsive, no text collision, admin hidden */}
+      <nav className="sticky top-0 z-30 border-b border-border/40 bg-background/90 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 sm:px-6 py-2.5">
+          <Link
+            to="/"
+            className="flex items-center gap-2 transition-transform hover:scale-105"
+            aria-label="Haarmonaa Home"
+          >
             <img
               src="/logo-circle.png"
               alt="Haarmonaa"
-              className="h-20 w-20 rounded-full border-2 border-primary/50 shadow-glow p-1 bg-card/85 backdrop-blur-md transition-transform hover:scale-105 duration-300"
+              className="h-9 w-9 sm:h-10 sm:w-10 rounded-full border border-primary/40 shadow-sm object-cover"
+            />
+          </Link>
+
+          <Link
+            to="/qr"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card/60 px-3.5 py-1.5 text-xs font-medium text-foreground transition-all hover:border-primary/40 hover:bg-secondary active:scale-95"
+          >
+            <QrCode size={13} className="text-primary" />
+            <span>QR Code</span>
+          </Link>
+        </div>
+      </nav>
+
+      {/* Hero Banner Header */}
+      <header className="relative overflow-hidden">
+        <img
+          src={heroImage}
+          alt="Haarmonaa luxury jewellery"
+          width={1600}
+          height={912}
+          className="h-[42vh] min-h-72 w-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/20" />
+        <div className="absolute inset-x-0 bottom-0 mx-auto max-w-3xl px-4 pb-8 text-center sm:px-6">
+          <div className="mb-3 flex justify-center">
+            <img
+              src="/logo-circle.png"
+              alt="Haarmonaa Emblem"
+              className="h-20 w-20 rounded-full border-2 border-primary/60 shadow-glow p-1 bg-card/90 backdrop-blur-md transition-transform hover:scale-105 duration-300"
             />
           </div>
-          <p className="text-xs uppercase tracking-[0.35em] text-primary">Haarmonaa · Luxury Handmade Jewellery</p>
-          <h1 className="mt-2 text-4xl font-semibold sm:text-5xl">
+
+          <p className="text-[11px] uppercase tracking-[0.35em] text-primary font-medium">
+            Haarmonaa · Luxury Handmade Jewellery
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-5xl">
             <span className="text-gradient-gold">Customer</span> Reviews & Ratings
           </h1>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-            Crafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo of you wearing it.
+          <p className="mx-auto mt-2.5 max-w-lg text-xs text-muted-foreground sm:text-sm">
+            Handcrafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo wearing it.
           </p>
-          {count > 0 && (
-            <div className="mt-5 inline-flex items-center gap-3 rounded-full border border-border bg-card/70 px-5 py-2">
-              <Stars value={Math.round(average)} />
-              <span className="text-sm font-medium">{average.toFixed(1)} / 5</span>
-              <span className="text-sm text-muted-foreground">
-                · {count} {count === 1 ? "review" : "reviews"}
+
+          {totalCount > 0 && (
+            <div className="mt-4 inline-flex items-center gap-2.5 rounded-full border border-border/80 bg-card/80 px-4 py-1.5 backdrop-blur-sm shadow-sm">
+              <Stars value={Math.round(averageRating)} size={15} />
+              <span className="text-xs font-semibold text-foreground">{averageRating.toFixed(1)} / 5</span>
+              <span className="text-xs text-muted-foreground">
+                · {totalCount} {totalCount === 1 ? "review" : "reviews"}
               </span>
             </div>
           )}
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl gap-10 px-5 py-12 lg:grid-cols-[minmax(0,420px)_1fr]">
-        <section className="panel h-fit p-6 sm:p-7">
-          <h2 className="text-2xl font-semibold">Leave your review</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            It takes less than a minute. Your email stays private.
+      {/* Main Content Layout */}
+      <main className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:px-6 lg:grid-cols-[minmax(0,400px)_1fr]">
+        {/* Left Column: Review Submission Form */}
+        <section className="panel h-fit p-5 sm:p-7">
+          <div className="flex items-center gap-2">
+            <Sparkles size={18} className="text-primary" />
+            <h2 className="text-xl font-semibold sm:text-2xl">Leave your review</h2>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+            Takes less than a minute. Your email stays private.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-6 space-y-5">
+          <form onSubmit={onSubmit} className="mt-5 space-y-4 sm:space-y-5">
+            {/* Product Category Chips */}
             <div className="space-y-2">
-              <Label>What did you buy?</Label>
-              <div className="flex flex-wrap gap-2">
+              <Label className="text-xs sm:text-sm font-medium">What did you purchase?</Label>
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
                 {PRODUCTS.map((item) => (
                   <button
                     key={item}
                     type="button"
                     onClick={() => setProduct(item)}
-                    className={`rounded-full border px-3.5 py-1.5 text-sm transition-colors ${
+                    className={`rounded-full border px-3 py-1 text-xs sm:text-sm transition-all active:scale-95 ${
                       product === item
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border text-muted-foreground hover:bg-secondary"
+                        ? "border-primary bg-primary text-primary-foreground font-medium shadow-sm"
+                        : "border-border/80 bg-background/50 text-muted-foreground hover:border-primary/50 hover:bg-secondary/60 hover:text-foreground"
                     }`}
                   >
                     {item}
@@ -277,8 +296,14 @@ function Index() {
               </div>
             </div>
 
+            {/* Star Rating Picker */}
             <div className="space-y-2">
-              <Label>Your rating</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs sm:text-sm font-medium">Your rating</Label>
+                <span className="text-xs text-primary/80 font-medium">
+                  {RATING_LABELS[hoverRating || rating] || "Select stars"}
+                </span>
+              </div>
               <div className="flex gap-1.5">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <button
@@ -286,73 +311,112 @@ function Index() {
                     type="button"
                     aria-label={`${n} star`}
                     onClick={() => setRating(n)}
-                    className="transition-transform hover:scale-110"
+                    onMouseEnter={() => setHoverRating(n)}
+                    onMouseLeave={() => setHoverRating(0)}
+                    className="transition-transform hover:scale-115 focus:outline-none"
                   >
                     <Star
-                      size={30}
-                      className={n <= rating ? "fill-gold text-gold" : "text-muted-foreground/40"}
+                      size={28}
+                      className={`transition-colors ${
+                        n <= (hoverRating || rating)
+                          ? "fill-gold text-gold"
+                          : "text-muted-foreground/30 hover:text-gold/50"
+                      }`}
                     />
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
+            {/* Name & Phone */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="name" className="text-xs sm:text-sm">Name</Label>
                 <Input
                   id="name"
                   value={name}
                   maxLength={100}
+                  required
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Priya Shah"
+                  className="bg-background/50"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone (optional)</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="phone" className="text-xs sm:text-sm">Phone (optional)</Label>
                 <Input
                   id="phone"
                   value={phone}
                   maxLength={20}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="+91 98765 43210"
+                  className="bg-background/50"
                 />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+            {/* Email */}
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-xs sm:text-sm">Email</Label>
               <Input
                 id="email"
                 type="email"
+                required
                 value={email}
                 maxLength={255}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                className="bg-background/50"
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="comment">Your review</Label>
+            {/* Review Comment */}
+            <div className="space-y-1.5">
+              <Label htmlFor="comment" className="text-xs sm:text-sm">Your review</Label>
               <Textarea
                 id="comment"
+                required
                 value={comment}
                 maxLength={1000}
-                rows={4}
+                rows={3}
                 onChange={(e) => setComment(e.target.value)}
-                placeholder="The kada finish is beautiful and it paired perfectly with my chaniya choli..."
+                placeholder="The craftsmanship is stunning and it paired beautifully with my festive outfit..."
+                className="bg-background/50"
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="photo">Add a photo (optional)</Label>
-              <label
-                htmlFor="photo"
-                className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-secondary"
-              >
-                <Upload size={18} />
-                {file ? file.name : "Choose a photo of your purchase"}
-              </label>
+            {/* Photo Uploader */}
+            <div className="space-y-1.5">
+              <Label htmlFor="photo" className="text-xs sm:text-sm">Add a photo of your purchase (optional)</Label>
+              {!preview ? (
+                <label
+                  htmlFor="photo"
+                  className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border/90 bg-background/40 p-4 text-center text-xs text-muted-foreground transition-all hover:border-primary/50 hover:bg-secondary/40"
+                >
+                  <Upload size={20} className="mb-1 text-primary/70" />
+                  <span className="font-medium text-foreground">Click or tap to upload photo</span>
+                  <span className="text-[11px] text-muted-foreground mt-0.5">JPG, PNG, WebP up to 10 MB</span>
+                </label>
+              ) : (
+                <div className="relative mt-2 inline-block">
+                  <img
+                    src={preview}
+                    alt="Preview"
+                    className="h-28 w-28 rounded-xl object-cover border border-primary/30 shadow-md"
+                  />
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md transition-transform hover:scale-110"
+                    aria-label="Remove photo"
+                  >
+                    <X size={14} />
+                  </button>
+                  <p className="mt-1 text-[11px] text-muted-foreground truncate max-w-[120px]">
+                    {file?.name}
+                  </p>
+                </div>
+              )}
               <input
                 id="photo"
                 type="file"
@@ -360,59 +424,104 @@ function Index() {
                 className="hidden"
                 onChange={onPickFile}
               />
-              {preview && (
-                <img
-                  src={preview}
-                  alt="Preview of the photo you selected"
-                  loading="lazy"
-                  className="mt-2 h-32 w-32 rounded-xl object-cover"
-                />
-              )}
             </div>
 
-            <Button type="submit" size="lg" className="w-full" disabled={submit.isPending}>
-              {submit.isPending && <Loader2 className="animate-spin" />}
-              {submit.isPending ? "Sending..." : "Submit review"}
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full font-medium"
+              disabled={submit.isPending}
+            >
+              {submit.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {submit.isPending ? "Submitting review..." : "Submit Review"}
             </Button>
           </form>
         </section>
 
+        {/* Right Column: Customer Reviews Feed */}
         <section>
-          <h2 className="text-2xl font-semibold">What shoppers are saying</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold sm:text-2xl">Customer Reviews</h2>
+            {totalCount > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Showing {reviews.length} of {totalCount}
+              </span>
+            )}
+          </div>
 
-          {isLoading && <p className="mt-4 text-sm text-muted-foreground">Loading reviews...</p>}
+          {isLoading && (
+            <div className="mt-6 flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              Loading reviews...
+            </div>
+          )}
 
-          {!isLoading && count === 0 && (
-            <div className="panel mt-4 p-8 text-center text-sm text-muted-foreground">
-              No reviews yet — yours would be the first one.
+          {!isLoading && reviews.length === 0 && (
+            <div className="panel mt-5 p-10 text-center text-sm text-muted-foreground">
+              <p className="text-base font-medium text-foreground">No reviews yet</p>
+              <p className="mt-1 text-xs">Be the first to share your thoughts on our jewellery!</p>
             </div>
           )}
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {reviews?.map((review) => (
-              <article key={review.id} className="panel flex flex-col gap-3 p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-semibold leading-tight">{review.name}</h3>
-                    <p className="text-xs uppercase tracking-widest text-primary">
-                      {review.product}
-                    </p>
+            {reviews.map((review) => (
+              <article
+                key={review.id}
+                className="panel flex flex-col justify-between gap-3 p-4 sm:p-5 transition-all hover:border-primary/40 hover:shadow-glow/10"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      {/* Avatar initial */}
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold text-primary border border-primary/30">
+                        {review.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="text-sm font-semibold leading-tight text-foreground">
+                            {review.name}
+                          </h3>
+                          <span title="Verified Customer" className="text-emerald-500">
+                            <CheckCircle2 size={13} />
+                          </span>
+                        </div>
+                        <span className="inline-block text-[11px] font-medium uppercase tracking-wider text-primary">
+                          {review.product}
+                        </span>
+                      </div>
+                    </div>
+                    <Stars value={review.rating} size={14} />
                   </div>
-                  <Stars value={review.rating} />
+
+                  <p className="mt-3 text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                    <Quote size={13} className="inline mr-1 text-gold/60 align-baseline" />
+                    {review.comment}
+                  </p>
                 </div>
-                <p className="flex gap-2 text-sm text-muted-foreground">
-                  <Quote size={16} className="mt-1 shrink-0 text-gold" />
-                  <span>{review.comment}</span>
-                </p>
+
+                {/* Lazy-loaded photo with click-to-zoom modal */}
                 {review.photo && (
-                  <img
-                    src={review.photo}
-                    alt={`Photo shared by ${review.name} of their ${review.product}`}
-                    loading="lazy"
-                    className="h-48 w-full rounded-xl object-cover"
-                  />
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxImg(review.photo)}
+                      className="group relative block w-full overflow-hidden rounded-xl focus:outline-none"
+                    >
+                      <img
+                        src={review.photo}
+                        alt={`Photo shared by ${review.name} wearing ${review.product}`}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-44 sm:h-48 w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                      <span className="absolute bottom-2 right-2 rounded-md bg-background/80 px-2 py-0.5 text-[10px] font-medium text-foreground backdrop-blur-sm opacity-90 group-hover:opacity-100">
+                        Tap to view
+                      </span>
+                    </button>
+                  </div>
                 )}
-                <p className="text-xs text-muted-foreground/70">
+
+                <p className="border-t border-border/40 pt-2 text-[11px] text-muted-foreground/60">
                   {new Date(review.created_at).toLocaleDateString("en-IN", {
                     day: "numeric",
                     month: "short",
@@ -422,9 +531,59 @@ function Index() {
               </article>
             ))}
           </div>
+
+          {/* Load More Button — Prevents loading hundreds of reviews/photos at once */}
+          {hasMore && (
+            <div className="mt-8 flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                onClick={() => setLimit((prev) => prev + PAGE_STEP)}
+                disabled={isFetching}
+                className="rounded-full border-primary/30 px-7 text-xs sm:text-sm font-medium hover:border-primary hover:bg-primary/10 active:scale-95"
+              >
+                {isFetching ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading more...
+                  </>
+                ) : (
+                  `Load More Reviews (${totalCount - reviews.length} more)`
+                )}
+              </Button>
+            </div>
+          )}
         </section>
       </main>
 
+      {/* Lightbox Photo Modal */}
+      {lightboxImg && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          onClick={() => setLightboxImg(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightboxImg}
+              alt="Customer jewellery review photo"
+              className="max-h-[85vh] w-auto max-w-full rounded-2xl object-contain shadow-2xl border border-primary/30"
+            />
+            <button
+              type="button"
+              onClick={() => setLightboxImg(null)}
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-foreground shadow-lg border border-border hover:bg-secondary"
+              aria-label="Close photo preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Branded Footer */}
       <footer className="border-t border-border/40 py-10 text-center text-xs text-muted-foreground">
         <div className="mb-3 flex items-center justify-center gap-2.5">
           <img src="/logo-circle.png" alt="Haarmonaa" className="h-6 w-6 rounded-full border border-primary/30" />

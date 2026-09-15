@@ -1,37 +1,62 @@
 import { createServerFn } from "@tanstack/react-start";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import * as crypto from "crypto";
 import { getDb, schema } from "@/lib/db.server";
 
-// ─── Fetch approved reviews (public) ─────────────────────────────────────────
+// ─── Fetch approved reviews with pagination (public) ─────────────────────────
 
-export const getApprovedReviews = createServerFn({ method: "GET" }).handler(
-  async () => {
+const paginationSchema = z.object({
+  limit: z.number().int().min(1).max(50).default(8),
+  offset: z.number().int().min(0).default(0),
+}).optional();
+
+export const getApprovedReviews = createServerFn({ method: "GET" })
+  .validator((d: unknown) => paginationSchema.parse(d ?? {}))
+  .handler(async ({ data }) => {
     const db = getDb();
-    const rows = await db
-      .select({
-        id: schema.reviews.id,
-        name: schema.reviews.name,
-        product: schema.reviews.product,
-        rating: schema.reviews.rating,
-        comment: schema.reviews.comment,
-        image_url: schema.reviews.image_url,
-        created_at: schema.reviews.created_at,
-      })
-      .from(schema.reviews)
-      .where(eq(schema.reviews.status, "approved"))
-      .orderBy(desc(schema.reviews.created_at))
-      .limit(100);
+    const limit = data?.limit ?? 8;
+    const offset = data?.offset ?? 0;
 
-    return rows.map((r) => ({
-      ...r,
-      created_at: r.created_at.toISOString(),
-      // image_url is already a local /uploads/... path — serve directly
-      photo: r.image_url ?? null,
-    }));
-  },
-);
+    const [rows, countResult] = await Promise.all([
+      db
+        .select({
+          id: schema.reviews.id,
+          name: schema.reviews.name,
+          product: schema.reviews.product,
+          rating: schema.reviews.rating,
+          comment: schema.reviews.comment,
+          image_url: schema.reviews.image_url,
+          created_at: schema.reviews.created_at,
+        })
+        .from(schema.reviews)
+        .where(eq(schema.reviews.status, "approved"))
+        .orderBy(desc(schema.reviews.created_at))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({
+          count: sql<number>`count(*)`,
+          avgRating: sql<number>`coalesce(avg(${schema.reviews.rating}), 0)`,
+        })
+        .from(schema.reviews)
+        .where(eq(schema.reviews.status, "approved")),
+    ]);
+
+    const total = Number(countResult[0]?.count ?? 0);
+    const avg = Number(countResult[0]?.avgRating ?? 0);
+
+    return {
+      reviews: rows.map((r) => ({
+        ...r,
+        created_at: r.created_at.toISOString(),
+        photo: r.image_url ?? null,
+      })),
+      total,
+      average: Math.round(avg * 10) / 10,
+      hasMore: offset + rows.length < total,
+    };
+  });
 
 // ─── Submit a review (public) ─────────────────────────────────────────────────
 
