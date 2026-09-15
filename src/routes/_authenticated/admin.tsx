@@ -569,12 +569,19 @@ function AdminPage() {
   return (
     <div className="mx-auto max-w-4xl px-5 py-12">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.35em] text-primary">Stall admin</p>
-          <h1 className="mt-2 text-3xl font-semibold">
-            <span className="text-gradient-gold">Review</span> Management
-          </h1>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <img
+            src="/logo-circle.png"
+            alt="Haarmonaa"
+            className="h-12 w-12 rounded-full border-2 border-primary/40 shadow-sm"
+          />
+          <div>
+            <p className="text-xs uppercase tracking-[0.35em] text-primary">Haarmonaa Admin</p>
+            <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
+              <span className="text-gradient-gold">Review</span> & Inventory Management
+            </h1>
+          </div>
         </div>
         <Button variant="secondary" onClick={signOut}>
           <LogOut size={16} /> Sign out

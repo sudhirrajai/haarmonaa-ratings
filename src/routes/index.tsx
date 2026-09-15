@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Star, Upload, Loader2, Quote } from "lucide-react";
@@ -183,23 +183,59 @@ function Index() {
 
   return (
     <div className="min-h-screen">
+      {/* Top Brand Navigation */}
+      <nav className="sticky top-0 z-30 border-b border-border/40 bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
+          <Link to="/" className="flex items-center gap-3 transition-opacity hover:opacity-90">
+            <img
+              src="/logo-circle.png"
+              alt="Haarmonaa Monogram"
+              className="h-10 w-10 rounded-full border border-primary/40 shadow-sm"
+            />
+            <span className="font-serif text-xl tracking-[0.2em] font-semibold text-foreground">
+              HAARMONAA
+            </span>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/qr"
+              className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              QR Code
+            </Link>
+            <Link
+              to="/auth"
+              className="rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+            >
+              Admin
+            </Link>
+          </div>
+        </div>
+      </nav>
+
       <header className="relative overflow-hidden">
         <img
           src={heroImage}
-          alt="Handmade kada bangles, jhumka earrings and oxidised necklaces on maroon silk with marigolds and diyas"
+          alt="Handmade jewellery with gold accents"
           width={1600}
           height={912}
           className="h-[46vh] min-h-72 w-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/20" />
         <div className="absolute inset-x-0 bottom-0 mx-auto max-w-3xl px-5 pb-8 text-center">
-          <p className="text-xs uppercase tracking-[0.35em] text-primary">Navratri 2026 · Stall</p>
-          <h1 className="mt-3 text-4xl font-semibold sm:text-5xl">
-            <span className="text-gradient-gold">Handmade Jewellery</span> Reviews
+          <div className="mb-4 flex justify-center">
+            <img
+              src="/logo-circle.png"
+              alt="Haarmonaa"
+              className="h-20 w-20 rounded-full border-2 border-primary/50 shadow-glow p-1 bg-card/85 backdrop-blur-md transition-transform hover:scale-105 duration-300"
+            />
+          </div>
+          <p className="text-xs uppercase tracking-[0.35em] text-primary">Haarmonaa · Luxury Handmade Jewellery</p>
+          <h1 className="mt-2 text-4xl font-semibold sm:text-5xl">
+            <span className="text-gradient-gold">Customer</span> Reviews & Ratings
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground sm:text-base">
-            Kada, earrings, necklaces and more — crafted by hand. Tell us how you liked your
-            purchase and add a photo of you wearing it.
+            Crafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo of you wearing it.
           </p>
           {count > 0 && (
             <div className="mt-5 inline-flex items-center gap-3 rounded-full border border-border bg-card/70 px-5 py-2">
@@ -389,8 +425,12 @@ function Index() {
         </section>
       </main>
 
-      <footer className="border-t border-border py-8 text-center text-xs text-muted-foreground">
-        Made with love for Navratri · handmade in small batches
+      <footer className="border-t border-border/40 py-10 text-center text-xs text-muted-foreground">
+        <div className="mb-3 flex items-center justify-center gap-2.5">
+          <img src="/logo-circle.png" alt="Haarmonaa" className="h-6 w-6 rounded-full border border-primary/30" />
+          <span className="font-serif tracking-[0.25em] text-sm font-semibold text-foreground">HAARMONAA</span>
+        </div>
+        Handcrafted luxury jewellery · Crafted with elegance, devotion, and beauty
       </footer>
     </div>
   );

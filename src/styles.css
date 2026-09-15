@@ -5,9 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Navratri handmade-jewellery review site design system.
- * Deep maroon silk, marigold orange, antique gold.
- * All colors in oklch. Never hardcode colors in components.
+ * Haarmonaa Luxury Jewellery Brand Design System
+ * Deep Royal Midnight Navy (#172A45 / #1B365D), Warm Champagne Gold (#DFB15B / #E5B869), Pearl Ivory
+ * All colors in oklch.
  */
 
 @theme inline {
@@ -39,40 +39,52 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-gold: var(--gold);
+  --color-navy: var(--navy);
   --color-marigold: var(--marigold);
   --color-ring-offset-background: var(--background);
-  --shadow-glow: 0 10px 40px -10px oklch(0.72 0.17 62 / 0.35);
-  --shadow-card: 0 8px 30px -12px oklch(0.15 0.06 20 / 0.6);
+  --shadow-glow: 0 10px 40px -10px oklch(0.78 0.13 85 / 0.35);
+  --shadow-card: 0 12px 36px -12px oklch(0.1 0.04 250 / 0.75);
 }
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.19 0.055 18);
-  --foreground: oklch(0.96 0.02 80);
-  --card: oklch(0.24 0.06 18);
-  --card-foreground: oklch(0.96 0.02 80);
-  --popover: oklch(0.24 0.06 18);
-  --popover-foreground: oklch(0.96 0.02 80);
-  --primary: oklch(0.74 0.16 62);
-  --primary-foreground: oklch(0.2 0.06 25);
-  --secondary: oklch(0.3 0.07 20);
-  --secondary-foreground: oklch(0.96 0.02 80);
-  --muted: oklch(0.28 0.05 20);
-  --muted-foreground: oklch(0.78 0.035 70);
-  --accent: oklch(0.62 0.19 38);
-  --accent-foreground: oklch(0.98 0.015 80);
+  /* Deep Royal Midnight Navy */
+  --background: oklch(0.17 0.04 250);
+  --foreground: oklch(0.96 0.015 85);
+  --card: oklch(0.22 0.045 250);
+  --card-foreground: oklch(0.96 0.015 85);
+  --popover: oklch(0.22 0.045 250);
+  --popover-foreground: oklch(0.96 0.015 85);
+
+  /* Warm Champagne Gold */
+  --primary: oklch(0.78 0.13 85);
+  --primary-foreground: oklch(0.16 0.04 250);
+
+  /* Subtle Sapphire Navy secondary */
+  --secondary: oklch(0.27 0.05 250);
+  --secondary-foreground: oklch(0.94 0.03 85);
+
+  --muted: oklch(0.25 0.035 250);
+  --muted-foreground: oklch(0.76 0.03 85);
+
+  --accent: oklch(0.32 0.06 250);
+  --accent-foreground: oklch(0.98 0.015 85);
+
   --destructive: oklch(0.6 0.22 25);
   --destructive-foreground: oklch(0.98 0.01 80);
-  --border: oklch(0.4 0.06 45 / 0.4);
-  --input: oklch(0.34 0.05 25);
-  --ring: oklch(0.74 0.16 62);
-  --gold: oklch(0.82 0.13 82);
-  --marigold: oklch(0.72 0.19 55);
+
+  --border: oklch(0.78 0.13 85 / 0.22);
+  --input: oklch(0.27 0.045 250);
+  --ring: oklch(0.78 0.13 85);
+
+  --gold: oklch(0.82 0.13 85);
+  --navy: oklch(0.28 0.07 248);
+  --marigold: oklch(0.74 0.15 75);
 }
 
 .dark {
-  --background: oklch(0.19 0.055 18);
-  --foreground: oklch(0.96 0.02 80);
+  --background: oklch(0.17 0.04 250);
+  --foreground: oklch(0.96 0.015 85);
 }
 
 @layer base {
@@ -82,12 +94,22 @@
 
   body {
     background-color: var(--color-background);
-    background-image: radial-gradient(
+    background-image:
+      radial-gradient(
         ellipse at 15% 0%,
-        oklch(0.32 0.09 30 / 0.7),
+        oklch(0.28 0.08 248 / 0.7),
         transparent 60%
       ),
-      radial-gradient(ellipse at 85% 10%, oklch(0.35 0.1 60 / 0.45), transparent 55%);
+      radial-gradient(
+        ellipse at 85% 10%,
+        oklch(0.35 0.08 85 / 0.25),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse at 50% 100%,
+        oklch(0.24 0.06 250 / 0.4),
+        transparent 60%
+      );
     background-attachment: fixed;
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -104,18 +126,18 @@
 @utility text-gradient-gold {
   background-image: linear-gradient(
     100deg,
-    var(--color-gold),
-    var(--color-marigold),
-    var(--color-gold)
+    oklch(0.88 0.12 85),
+    oklch(0.75 0.14 78),
+    oklch(0.88 0.12 85)
   );
   background-clip: text;
   color: transparent;
 }
 
 @utility panel {
-  background-color: color-mix(in oklab, var(--color-card) 88%, transparent);
-  border: 1px solid var(--color-border);
+  background-color: color-mix(in oklab, var(--color-card) 92%, transparent);
+  border: 1px solid oklch(0.78 0.13 85 / 0.22);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(10px);
 }

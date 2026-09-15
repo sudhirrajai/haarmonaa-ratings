@@ -52,13 +52,18 @@ function AuthPage() {
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12">
       <div className="panel p-7">
-        <div className="mb-6 flex justify-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Lock className="text-primary" size={24} />
-          </div>
+        <div className="mb-6 flex flex-col items-center justify-center">
+          <img
+            src="/logo-circle.png"
+            alt="Haarmonaa"
+            className="h-16 w-16 rounded-full border-2 border-primary/40 shadow-glow p-0.5 bg-card"
+          />
+          <span className="mt-3 font-serif text-lg tracking-[0.25em] font-semibold text-foreground">
+            HAARMONAA
+          </span>
         </div>
-        <h1 className="text-center text-3xl font-semibold">
-          <span className="text-gradient-gold">Stall owner</span> access
+        <h1 className="text-center text-2xl font-semibold">
+          <span className="text-gradient-gold">Admin</span> Sign In
         </h1>
         <p className="mt-2 text-center text-sm text-muted-foreground">
           Sign in to manage jewellery items and customer reviews.

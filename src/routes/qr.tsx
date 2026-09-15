@@ -30,10 +30,22 @@ function QrPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-5 py-16 text-center">
-      <p className="text-xs uppercase tracking-[0.35em] text-primary">Navratri stall</p>
-      <h1 className="mt-3 text-4xl font-semibold">Scan to leave a review</h1>
+      <div className="mb-4 flex flex-col items-center justify-center">
+        <img
+          src="/logo-circle.png"
+          alt="Haarmonaa"
+          className="h-16 w-16 rounded-full border-2 border-primary/40 shadow-glow p-0.5 bg-card"
+        />
+        <span className="mt-3 font-serif text-lg tracking-[0.25em] font-semibold text-foreground">
+          HAARMONAA
+        </span>
+      </div>
+      <p className="text-xs uppercase tracking-[0.35em] text-primary">Luxury Handmade Jewellery</p>
+      <h1 className="mt-2 text-4xl font-semibold">
+        <span className="text-gradient-gold">Scan</span> to Leave a Review
+      </h1>
       <p className="mt-3 max-w-md text-sm text-muted-foreground">
-        Print this page or show it on a phone at the stall. Scanning opens the review form.
+        Print this page or show it at your stall. Scanning opens the Haarmonaa review form directly on customer phones.
       </p>
 
       <div className="panel mt-9 p-8">
