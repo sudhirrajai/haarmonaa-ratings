@@ -1,0 +1,3 @@
+# This directory stores user-uploaded review photos.
+# Files here are served statically at /uploads/<filename>
+# Add uploaded files to .gitignore if you don't want them in version control.

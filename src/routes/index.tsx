@@ -5,7 +5,9 @@ import { Star, Upload, Loader2, Quote } from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { getApprovedReviews, submitReview } from "@/lib/reviews.server";
+import { getActiveCategories } from "@/lib/admin-categories.server";
+import { uploadImage } from "@/lib/upload.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,20 +34,6 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const PRODUCTS = [
-  "Kada",
-  "Earrings",
-  "Jhumkas",
-  "Necklace",
-  "Bangles",
-  "Bracelet",
-  "Anklet",
-  "Ring",
-  "Maang tikka",
-  "Hair accessory",
-  "Other",
-];
-
 const reviewSchema = z.object({
   name: z.string().trim().min(1, "Please add your name").max(100),
   email: z.string().trim().email("Please enter a valid email").max(255),
@@ -61,9 +49,23 @@ type Review = {
   product: string;
   rating: number;
   comment: string;
-  image_url: string | null;
+  photo: string | null;
   created_at: string;
 };
+
+/** Read a File as a base64 string (without the data:...;base64, prefix) */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Strip the "data:image/jpeg;base64," prefix
+      resolve(result.split(",")[1] ?? "");
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function Stars({ value, size = 16 }: { value: number; size?: number }) {
   return (
@@ -79,39 +81,24 @@ function Stars({ value, size = 16 }: { value: number; size?: number }) {
   );
 }
 
-function useReviews() {
+function useApprovedReviews() {
   return useQuery({
-    queryKey: ["reviews"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("reviews")
-        .select("id, name, product, rating, comment, image_url, created_at")
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
+    queryKey: ["reviews", "approved"],
+    queryFn: () => getApprovedReviews(),
+  });
+}
 
-      const rows = (data ?? []) as Review[];
-      const paths = rows.map((r) => r.image_url).filter((p): p is string => Boolean(p));
-      const signed = new Map<string, string>();
-      if (paths.length) {
-        const { data: urls } = await supabase.storage
-          .from("review-photos")
-          .createSignedUrls(paths, 60 * 60);
-        urls?.forEach((u) => {
-          if (u.path && u.signedUrl) signed.set(u.path, u.signedUrl);
-        });
-      }
-      return rows.map((r) => ({
-        ...r,
-        photo: r.image_url ? (signed.get(r.image_url) ?? null) : null,
-      }));
-    },
+function useActiveCategories() {
+  return useQuery({
+    queryKey: ["categories", "active"],
+    queryFn: () => getActiveCategories(),
   });
 }
 
 function Index() {
   const queryClient = useQueryClient();
-  const { data: reviews, isLoading } = useReviews();
+  const { data: reviews, isLoading } = useApprovedReviews();
+  const { data: categories } = useActiveCategories();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -121,6 +108,13 @@ function Index() {
   const [comment, setComment] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+
+  // Use DB categories if loaded, otherwise fall back to static list
+  const PRODUCTS = categories?.map((c) => c.name) ?? [
+    "Kada", "Earrings", "Jhumkas", "Necklace",
+    "Bangles", "Bracelet", "Anklet", "Ring",
+    "Maang tikka", "Hair accessory", "Other",
+  ];
 
   const count = reviews?.length ?? 0;
   const average = count ? reviews!.reduce((s, r) => s + r.rating, 0) / count : 0;
@@ -138,49 +132,45 @@ function Index() {
   const submit = useMutation({
     mutationFn: async () => {
       const parsed = reviewSchema.safeParse({
-        name,
-        email,
+        name, email,
         phone: phone || undefined,
-        product,
-        rating,
-        comment,
+        product, rating, comment,
       });
       if (!parsed.success) {
         throw new Error(parsed.error.issues[0]?.message ?? "Please check the form");
       }
 
-      let imagePath: string | null = null;
+      let imageUrl: string | null = null;
+
       if (file) {
-        const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        const path = `${crypto.randomUUID()}.${ext}`;
-        const { error: uploadError } = await supabase.storage
-          .from("review-photos")
-          .upload(path, file, { contentType: file.type || "image/jpeg" });
-        if (uploadError) throw new Error("The photo could not be uploaded. Please try again.");
-        imagePath = path;
+        // Convert to base64 and upload to local server — no cloud dependency
+        const base64 = await fileToBase64(file);
+        const result = await uploadImage({
+          data: {
+            base64,
+            mimeType: (file.type || "image/jpeg") as string,
+            filename: file.name,
+          },
+        });
+        imageUrl = result.url; // e.g. /uploads/abc.jpg
       }
 
-      const { error } = await supabase.from("reviews").insert({
-        name: parsed.data.name,
-        email: parsed.data.email,
-        phone: parsed.data.phone ?? null,
-        product: parsed.data.product,
-        rating: parsed.data.rating,
-        comment: parsed.data.comment,
-        image_url: imagePath,
+      await submitReview({
+        data: {
+          name: parsed.data.name,
+          email: parsed.data.email,
+          phone: parsed.data.phone ?? null,
+          product: parsed.data.product,
+          rating: parsed.data.rating,
+          comment: parsed.data.comment,
+          image_url: imageUrl,
+        },
       });
-      if (error) throw new Error("We couldn't save your review. Please try again.");
     },
     onSuccess: () => {
-      toast.success("Thank you! Your review is live.");
-      setName("");
-      setEmail("");
-      setPhone("");
-      setProduct("");
-      setRating(0);
-      setComment("");
-      setFile(null);
-      setPreview(null);
+      toast.success("Thank you! Your review is pending approval and will appear shortly.");
+      setName(""); setEmail(""); setPhone(""); setProduct("");
+      setRating(0); setComment(""); setFile(null); setPreview(null);
       void queryClient.invalidateQueries({ queryKey: ["reviews"] });
     },
     onError: (error: Error) => toast.error(error.message),

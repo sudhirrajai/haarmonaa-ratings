@@ -30,3 +30,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# User-uploaded review photos — keep the directory but not the files
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Archives
+*.zip

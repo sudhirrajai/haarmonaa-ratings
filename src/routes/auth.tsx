@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { adminLogin } from "@/lib/admin-auth.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +31,6 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -40,27 +39,11 @@ function AuthPage() {
     event.preventDefault();
     setBusy(true);
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: { emailRedirectTo: window.location.origin + "/admin" },
-        });
-        if (error) throw error;
-        toast.success("Check your email to confirm your account, then sign in.");
-        setMode("signin");
-        return;
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) throw error;
-      await supabase.rpc("claim_admin");
+      // The server function sets the httpOnly cookie via Set-Cookie response header
+      await adminLogin({ data: { email: email.trim(), password } });
       navigate({ to: "/admin", replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Something went wrong");
+      toast.error(error instanceof Error ? error.message : "Sign in failed");
     } finally {
       setBusy(false);
     }
@@ -69,13 +52,16 @@ function AuthPage() {
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-12">
       <div className="panel p-7">
-        <h1 className="text-3xl font-semibold">
+        <div className="mb-6 flex justify-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+            <Lock className="text-primary" size={24} />
+          </div>
+        </div>
+        <h1 className="text-center text-3xl font-semibold">
           <span className="text-gradient-gold">Stall owner</span> access
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {mode === "signin"
-            ? "Sign in to manage the jewellery items shoppers can choose from."
-            : "Create your account with the email you shared, then confirm it by email."}
+        <p className="mt-2 text-center text-sm text-muted-foreground">
+          Sign in to manage jewellery items and customer reviews.
         </p>
 
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
@@ -96,7 +82,7 @@ function AuthPage() {
               id="password"
               type="password"
               required
-              minLength={6}
+              minLength={1}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
@@ -104,19 +90,9 @@ function AuthPage() {
           </div>
           <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {busy && <Loader2 className="animate-spin" />}
-            {mode === "signin" ? "Sign in" : "Create account"}
+            {busy ? "Signing in..." : "Sign in"}
           </Button>
         </form>
-
-        <button
-          type="button"
-          onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-          className="mt-5 w-full text-sm text-muted-foreground underline-offset-4 hover:underline"
-        >
-          {mode === "signin"
-            ? "First time here? Create your account"
-            : "Already have an account? Sign in"}
-        </button>
       </div>
     </div>
   );

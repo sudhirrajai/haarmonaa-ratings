@@ -1,7 +1,6 @@
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
-import { attachSupabaseAuth } from "@/integrations/supabase/auth-attacher";
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
@@ -25,7 +24,18 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
+// Forward the admin_token cookie from the browser to server function calls
+// so that requireAdminAuth middleware can read it from the request headers.
+const cookieForwardMiddleware = createMiddleware({ type: "function" }).client(
+  async ({ next }) => {
+    // Cookies are automatically sent with same-origin requests — no manual
+    // header injection needed on the client side. The server reads them via
+    // getRequest().headers.get("cookie").
+    return next({});
+  },
+);
+
 export const startInstance = createStart(() => ({
-  functionMiddleware: [attachSupabaseAuth],
+  functionMiddleware: [cookieForwardMiddleware],
   requestMiddleware: [errorMiddleware, csrfMiddleware],
 }));
