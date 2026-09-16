@@ -1,12 +1,27 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { Star, Upload, Loader2, Quote, QrCode, X, Sparkles, CheckCircle2 } from "lucide-react";
+import {
+  Star,
+  Upload,
+  Loader2,
+  Quote,
+  QrCode,
+  X,
+  Sparkles,
+  CheckCircle2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  Camera,
+} from "lucide-react";
 import { z } from "zod";
 import { toast } from "sonner";
 
 import { getApprovedReviews, submitReview } from "@/lib/reviews.server";
 import { getActiveCategories } from "@/lib/admin-categories.server";
+import { getPublicBannerSettings } from "@/lib/admin-settings.server";
 import { uploadImage } from "@/lib/upload.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,18 +93,58 @@ const RATING_LABELS: Record<number, string> = {
   5: "Loved it! Excellent",
 };
 
-const INITIAL_LIMIT = 8;
-const PAGE_STEP = 8;
+const PAGE_SIZE = 8;
+
+function getPaginationRange(currentPage: number, totalPages: number): (number | string)[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "...", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+  return [1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages];
+}
 
 function Index() {
   const queryClient = useQueryClient();
-  const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
 
-  // Paginated reviews query with aggregate total & average
+  // Review filtering & pagination state
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [selectedRating, setSelectedRating] = useState<number | undefined>(undefined);
+  const [selectedProduct, setSelectedProduct] = useState<string>("all");
+  const [onlyWithPhoto, setOnlyWithPhoto] = useState<boolean>(false);
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "highest_rating" | "lowest_rating">("newest");
+
+  // Dynamic banner settings query
+  const { data: bannerSettings } = useQuery({
+    queryKey: ["public-banner-settings"],
+    queryFn: () => getPublicBannerSettings(),
+  });
+
+  // Filtered and paginated reviews query
   const { data: reviewsData, isLoading, isFetching } = useQuery({
-    queryKey: ["reviews", "approved", limit],
-    queryFn: () => getApprovedReviews({ data: { limit, offset: 0 } }),
+    queryKey: [
+      "reviews",
+      "approved",
+      { page, search, selectedRating, selectedProduct, onlyWithPhoto, sortBy },
+    ],
+    queryFn: () =>
+      getApprovedReviews({
+        data: {
+          page,
+          pageSize: PAGE_SIZE,
+          search: search.trim() || undefined,
+          rating: selectedRating,
+          product: selectedProduct !== "all" ? selectedProduct : undefined,
+          hasPhoto: onlyWithPhoto || undefined,
+          sortBy,
+        },
+      }),
   });
 
   const { data: categories } = useQuery({
@@ -116,8 +171,27 @@ function Index() {
 
   const reviews = reviewsData?.reviews ?? [];
   const totalCount = reviewsData?.total ?? 0;
+  const overallTotal = reviewsData?.overallTotal ?? totalCount;
   const averageRating = reviewsData?.average ?? 0;
-  const hasMore = reviewsData?.hasMore ?? false;
+  const totalPages = reviewsData?.totalPages ?? 1;
+  const currentPage = reviewsData?.page ?? page;
+
+  const isFiltered = Boolean(
+    search.trim() ||
+    selectedRating !== undefined ||
+    selectedProduct !== "all" ||
+    onlyWithPhoto ||
+    sortBy !== "newest"
+  );
+
+  function resetFilters() {
+    setSearch("");
+    setSelectedRating(undefined);
+    setSelectedProduct("all");
+    setOnlyWithPhoto(false);
+    setSortBy("newest");
+    setPage(1);
+  }
 
   function onPickFile(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files?.[0] ?? null;
@@ -224,11 +298,11 @@ function Index() {
       {/* Hero Banner Header */}
       <header className="relative overflow-hidden">
         <img
-          src={heroImage}
+          src={bannerSettings?.imageUrl || heroImage}
           alt="Haarmonaa luxury jewellery"
           width={1600}
           height={912}
-          className="h-[42vh] min-h-72 w-full object-cover"
+          className="h-[42vh] min-h-72 w-full object-cover transition-opacity duration-300"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/20" />
         <div className="absolute inset-x-0 bottom-0 mx-auto max-w-3xl px-4 pb-8 text-center sm:px-6">
@@ -244,18 +318,25 @@ function Index() {
             Haarmonaa · Luxury Handmade Jewellery
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-5xl">
-            <span className="text-gradient-gold">Customer</span> Reviews & Ratings
+            {bannerSettings?.title ? (
+              bannerSettings.title
+            ) : (
+              <>
+                <span className="text-gradient-gold">Customer</span> Reviews & Ratings
+              </>
+            )}
           </h1>
           <p className="mx-auto mt-2.5 max-w-lg text-xs text-muted-foreground sm:text-sm">
-            Handcrafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo wearing it.
+            {bannerSettings?.subtitle ||
+              "Handcrafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo wearing it."}
           </p>
 
-          {totalCount > 0 && (
+          {overallTotal > 0 && (
             <div className="mt-4 inline-flex items-center gap-2.5 rounded-full border border-border/80 bg-card/80 px-4 py-1.5 backdrop-blur-sm shadow-sm">
               <Stars value={Math.round(averageRating)} size={15} />
               <span className="text-xs font-semibold text-foreground">{averageRating.toFixed(1)} / 5</span>
               <span className="text-xs text-muted-foreground">
-                · {totalCount} {totalCount === 1 ? "review" : "reviews"}
+                · {overallTotal} {overallTotal === 1 ? "review" : "reviews"}
               </span>
             </div>
           )}
@@ -439,14 +520,144 @@ function Index() {
         </section>
 
         {/* Right Column: Customer Reviews Feed */}
-        <section>
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold sm:text-2xl">Customer Reviews</h2>
-            {totalCount > 0 && (
-              <span className="text-xs text-muted-foreground">
-                Showing {reviews.length} of {totalCount}
-              </span>
+        <section id="reviews-section" className="scroll-mt-24 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold sm:text-2xl">Customer Reviews</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {totalCount > 0 ? (
+                  <>
+                    Showing {startItem}–{endItem} of {totalCount} reviews
+                    {isFiltered && ` (filtered from ${overallTotal} total)`}
+                  </>
+                ) : (
+                  "No reviews matching your filters"
+                )}
+              </p>
+            </div>
+
+            {isFiltered && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={resetFilters}
+                className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1.5"
+              >
+                <RotateCcw size={13} />
+                Reset filters
+              </Button>
             )}
+          </div>
+
+          {/* Backend Filter Controls */}
+          <div className="panel p-3.5 space-y-2.5 bg-card/60">
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Search keyword input */}
+              <div className="relative flex-1 min-w-[180px]">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Search reviews, customer name..."
+                  className="pl-8 text-xs h-9 bg-background/50"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch("");
+                      setPage(1);
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              {/* Product category select */}
+              <div className="w-full sm:w-auto">
+                <select
+                  value={selectedProduct}
+                  onChange={(e) => {
+                    setSelectedProduct(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-9 w-full sm:w-auto rounded-lg border border-border/80 bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                  aria-label="Filter by jewellery type"
+                >
+                  <option value="all">All Jewellery Types</option>
+                  {PRODUCTS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Star rating select */}
+              <div className="w-full sm:w-auto">
+                <select
+                  value={selectedRating !== undefined ? String(selectedRating) : "all"}
+                  onChange={(e) => {
+                    setSelectedRating(e.target.value === "all" ? undefined : Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-9 w-full sm:w-auto rounded-lg border border-border/80 bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                  aria-label="Filter by star rating"
+                >
+                  <option value="all">All Star Ratings</option>
+                  <option value="5">⭐⭐⭐⭐⭐ (5 stars)</option>
+                  <option value="4">⭐⭐⭐⭐ (4 stars)</option>
+                  <option value="3">⭐⭐⭐ (3 stars)</option>
+                  <option value="2">⭐⭐ (2 stars)</option>
+                  <option value="1">⭐ (1 star)</option>
+                </select>
+              </div>
+
+              {/* Photo filter toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOnlyWithPhoto(!onlyWithPhoto);
+                  setPage(1);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 h-9 text-xs font-medium transition-colors ${
+                  onlyWithPhoto
+                    ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                    : "border-border/80 bg-background/50 text-muted-foreground hover:text-foreground hover:border-primary/40"
+                }`}
+              >
+                <Camera size={13} />
+                <span>With Photo</span>
+              </button>
+
+              {/* Sort order select */}
+              <div className="w-full sm:w-auto">
+                <select
+                  value={sortBy}
+                  onChange={(e) => {
+                    setSortBy(e.target.value as any);
+                    setPage(1);
+                  }}
+                  className="h-9 w-full sm:w-auto rounded-lg border border-border/80 bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                  aria-label="Sort reviews"
+                >
+                  <option value="newest">Sort: Newest</option>
+                  <option value="highest_rating">Sort: Highest Rated</option>
+                  <option value="lowest_rating">Sort: Lowest Rated</option>
+                  <option value="oldest">Sort: Oldest</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           {isLoading && (
@@ -458,8 +669,23 @@ function Index() {
 
           {!isLoading && reviews.length === 0 && (
             <div className="panel mt-5 p-10 text-center text-sm text-muted-foreground">
-              <p className="text-base font-medium text-foreground">No reviews yet</p>
-              <p className="mt-1 text-xs">Be the first to share your thoughts on our jewellery!</p>
+              <p className="text-base font-medium text-foreground">No reviews found</p>
+              <p className="mt-1 text-xs">
+                {isFiltered
+                  ? "Try resetting or adjusting your search filters above."
+                  : "Be the first to share your thoughts on our jewellery!"}
+              </p>
+              {isFiltered && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={resetFilters}
+                  className="mt-4 text-xs"
+                >
+                  Reset all filters
+                </Button>
+              )}
             </div>
           )}
 
@@ -532,27 +758,76 @@ function Index() {
             ))}
           </div>
 
-          {/* Load More Button — Prevents loading hundreds of reviews/photos at once */}
-          {hasMore && (
-            <div className="mt-8 flex justify-center">
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                onClick={() => setLimit((prev) => prev + PAGE_STEP)}
-                disabled={isFetching}
-                className="rounded-full border-primary/30 px-7 text-xs sm:text-sm font-medium hover:border-primary hover:bg-primary/10 active:scale-95"
-              >
-                {isFetching ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Loading more...
-                  </>
-                ) : (
-                  `Load More Reviews (${totalCount - reviews.length} more)`
+          {/* Proper Numbered Pagination */}
+          {totalPages > 1 && (
+            <nav
+              aria-label="Reviews pagination"
+              className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/50 pt-6"
+            >
+              <p className="text-xs text-muted-foreground">
+                Page <span className="font-semibold text-foreground">{currentPage}</span> of{" "}
+                <span className="font-semibold text-foreground">{totalPages}</span>
+              </p>
+
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage <= 1 || isFetching}
+                  onClick={() => {
+                    setPage((p) => Math.max(1, p - 1));
+                    document.getElementById("reviews-section")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="h-8 px-2.5 text-xs gap-1"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft size={14} />
+                  <span className="hidden sm:inline">Previous</span>
+                </Button>
+
+                {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                  typeof p === "number" ? (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setPage(p);
+                        document.getElementById("reviews-section")?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      disabled={isFetching}
+                      className={`h-8 min-w-8 rounded-lg px-2 text-xs font-medium transition-all ${
+                        currentPage === p
+                          ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                          : "border border-border/80 bg-card/60 text-muted-foreground hover:border-primary/50 hover:bg-secondary hover:text-foreground"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ) : (
+                    <span key={idx} className="px-1 text-xs text-muted-foreground">
+                      …
+                    </span>
+                  )
                 )}
-              </Button>
-            </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage >= totalPages || isFetching}
+                  onClick={() => {
+                    setPage((p) => Math.min(totalPages, p + 1));
+                    document.getElementById("reviews-section")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="h-8 px-2.5 text-xs gap-1"
+                  aria-label="Next page"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRight size={14} />
+                </Button>
+              </div>
+            </nav>
           )}
         </section>
       </main>

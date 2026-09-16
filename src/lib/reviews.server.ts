@@ -1,24 +1,94 @@
 import { createServerFn } from "@tanstack/react-start";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, sql, isNotNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import * as crypto from "crypto";
 import { getDb, schema } from "@/lib/db.server";
 
-// ─── Fetch approved reviews with pagination (public) ─────────────────────────
+// ─── Fetch approved reviews with filtering & pagination (public) ─────────────
 
-const paginationSchema = z.object({
-  limit: z.number().int().min(1).max(50).default(8),
-  offset: z.number().int().min(0).default(0),
-}).optional();
+const publicReviewsFilterSchema = z
+  .object({
+    page: z.number().int().min(1).default(1),
+    pageSize: z.number().int().min(1).max(50).default(8),
+    search: z.string().trim().max(100).optional(),
+    rating: z.number().int().min(1).max(5).optional(),
+    product: z.string().trim().max(80).optional(),
+    hasPhoto: z.boolean().optional(),
+    sortBy: z
+      .enum(["newest", "oldest", "highest_rating", "lowest_rating"])
+      .default("newest"),
+    // Backward compatibility for existing limit/offset callers
+    limit: z.number().int().min(1).max(50).optional(),
+    offset: z.number().int().min(0).optional(),
+  })
+  .optional();
 
 export const getApprovedReviews = createServerFn({ method: "GET" })
-  .validator((d: unknown) => paginationSchema.parse(d ?? {}))
+  .validator((d: unknown) => publicReviewsFilterSchema.parse(d ?? {}))
   .handler(async ({ data }) => {
     const db = getDb();
-    const limit = data?.limit ?? 8;
-    const offset = data?.offset ?? 0;
 
-    const [rows, countResult] = await Promise.all([
+    // Determine pagination
+    const pageSize = data?.pageSize ?? data?.limit ?? 8;
+    const page =
+      data?.page ??
+      (data?.offset != null && data?.limit
+        ? Math.floor(data.offset / data.limit) + 1
+        : 1);
+    const offset = data?.offset ?? (page - 1) * pageSize;
+
+    // Build filter conditions
+    const conditions = [eq(schema.reviews.status, "approved")];
+
+    if (data?.search) {
+      const q = `%${data.search}%`;
+      conditions.push(
+        or(
+          like(schema.reviews.name, q),
+          like(schema.reviews.comment, q),
+          like(schema.reviews.product, q)
+        )!
+      );
+    }
+
+    if (data?.rating && data.rating >= 1 && data.rating <= 5) {
+      conditions.push(eq(schema.reviews.rating, data.rating));
+    }
+
+    if (data?.product && data.product !== "all") {
+      conditions.push(eq(schema.reviews.product, data.product));
+    }
+
+    if (data?.hasPhoto) {
+      conditions.push(
+        and(
+          isNotNull(schema.reviews.image_url),
+          ne(schema.reviews.image_url, "")
+        )!
+      );
+    }
+
+    // Determine sort order
+    let orderByClause;
+    switch (data?.sortBy) {
+      case "oldest":
+        orderByClause = [asc(schema.reviews.created_at)];
+        break;
+      case "highest_rating":
+        orderByClause = [desc(schema.reviews.rating), desc(schema.reviews.created_at)];
+        break;
+      case "lowest_rating":
+        orderByClause = [asc(schema.reviews.rating), desc(schema.reviews.created_at)];
+        break;
+      case "newest":
+      default:
+        orderByClause = [desc(schema.reviews.created_at)];
+        break;
+    }
+
+    const whereCondition = and(...conditions);
+
+    const [rows, filteredCountResult, overallStats] = await Promise.all([
       db
         .select({
           id: schema.reviews.id,
@@ -30,10 +100,16 @@ export const getApprovedReviews = createServerFn({ method: "GET" })
           created_at: schema.reviews.created_at,
         })
         .from(schema.reviews)
-        .where(eq(schema.reviews.status, "approved"))
-        .orderBy(desc(schema.reviews.created_at))
-        .limit(limit)
+        .where(whereCondition)
+        .orderBy(...orderByClause)
+        .limit(pageSize)
         .offset(offset),
+      db
+        .select({
+          count: sql<number>`count(*)`,
+        })
+        .from(schema.reviews)
+        .where(whereCondition),
       db
         .select({
           count: sql<number>`count(*)`,
@@ -43,8 +119,10 @@ export const getApprovedReviews = createServerFn({ method: "GET" })
         .where(eq(schema.reviews.status, "approved")),
     ]);
 
-    const total = Number(countResult[0]?.count ?? 0);
-    const avg = Number(countResult[0]?.avgRating ?? 0);
+    const total = Number(filteredCountResult[0]?.count ?? 0);
+    const overallTotal = Number(overallStats[0]?.count ?? 0);
+    const avg = Number(overallStats[0]?.avgRating ?? 0);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return {
       reviews: rows.map((r) => ({
@@ -53,8 +131,12 @@ export const getApprovedReviews = createServerFn({ method: "GET" })
         photo: r.image_url ?? null,
       })),
       total,
+      overallTotal,
+      totalPages,
+      page,
+      pageSize,
       average: Math.round(avg * 10) / 10,
-      hasMore: offset + rows.length < total,
+      hasMore: page < totalPages,
     };
   });
 

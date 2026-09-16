@@ -1,11 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import {
   Loader2, Plus, Trash2, Eye, EyeOff, LogOut,
   CheckCircle, XCircle, Pencil, BarChart3,
   Star, Clock, ThumbsUp, ThumbsDown, Package,
   Search, Filter, X, ShieldCheck,
+  Image as ImageIcon, Upload, RotateCcw, ChevronLeft, ChevronRight, Camera,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,7 +25,14 @@ import {
   toggleCategory,
   deleteCategory,
 } from "@/lib/admin-categories.server";
-import { getAutoApprove, setAutoApprove } from "@/lib/admin-settings.server";
+import {
+  getAutoApprove,
+  setAutoApprove,
+  getPublicBannerSettings,
+  updateBannerSettings,
+  resetBannerSettings,
+} from "@/lib/admin-settings.server";
+import { uploadImage } from "@/lib/upload.server";
 import { adminLogout } from "@/lib/admin-auth.server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +40,33 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import heroImage from "@/assets/hero-jewellery.jpg";
+
+/** Read a File as a base64 string */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(",")[1] ?? "");
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function getPaginationRange(currentPage: number, totalPages: number): (number | string)[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "...", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+  return [1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages];
+}
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -201,8 +236,14 @@ function EditReviewModal({
 
 function ReviewsTab() {
   const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [statusFilter, setStatusFilter] = useState<"all" | ReviewStatus>("all");
   const [search, setSearch] = useState("");
+  const [ratingFilter, setRatingFilter] = useState<number | undefined>(undefined);
+  const [productFilter, setProductFilter] = useState<string>("all");
+  const [hasPhotoFilter, setHasPhotoFilter] = useState<boolean | undefined>(undefined);
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "rating_desc" | "rating_asc">("newest");
   const [editingReview, setEditingReview] = useState<Review | null>(null);
 
   const stats = useQuery({
@@ -210,10 +251,56 @@ function ReviewsTab() {
     queryFn: () => getReviewStats(),
   });
 
-  const reviewsQuery = useQuery({
-    queryKey: ["admin-reviews", statusFilter],
-    queryFn: () => adminGetAllReviews({ data: { status: statusFilter } }),
+  const categoriesQuery = useQuery({
+    queryKey: ["admin-categories"],
+    queryFn: () => adminGetCategories(),
   });
+
+  const reviewsQuery = useQuery({
+    queryKey: [
+      "admin-reviews",
+      { page, pageSize, status: statusFilter, search, rating: ratingFilter, product: productFilter, hasPhoto: hasPhotoFilter, sortBy },
+    ],
+    queryFn: () =>
+      adminGetAllReviews({
+        data: {
+          page,
+          pageSize,
+          status: statusFilter,
+          search: search.trim() || undefined,
+          rating: ratingFilter,
+          product: productFilter !== "all" ? productFilter : undefined,
+          hasPhoto: hasPhotoFilter,
+          sortBy,
+        },
+      }),
+  });
+
+  const reviews = reviewsQuery.data?.reviews ?? [];
+  const totalCount = reviewsQuery.data?.total ?? 0;
+  const totalPages = reviewsQuery.data?.totalPages ?? 1;
+  const currentPage = reviewsQuery.data?.page ?? page;
+  const startItem = totalCount > 0 ? (currentPage - 1) * pageSize + 1 : 0;
+  const endItem = Math.min(currentPage * pageSize, totalCount);
+
+  const isFiltered = Boolean(
+    search.trim() ||
+    statusFilter !== "all" ||
+    ratingFilter !== undefined ||
+    productFilter !== "all" ||
+    hasPhotoFilter !== undefined ||
+    sortBy !== "newest"
+  );
+
+  function resetFilters() {
+    setSearch("");
+    setStatusFilter("all");
+    setRatingFilter(undefined);
+    setProductFilter("all");
+    setHasPhotoFilter(undefined);
+    setSortBy("newest");
+    setPage(1);
+  }
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["admin-reviews"] });
@@ -244,17 +331,6 @@ function ReviewsTab() {
     mutationFn: (id: string) => deleteReview({ data: { id } }),
     onSuccess: () => { toast.success("Review deleted"); refresh(); },
     onError: (e: Error) => toast.error(e.message),
-  });
-
-  const filtered = (reviewsQuery.data ?? []).filter((r) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (
-      r.name.toLowerCase().includes(q) ||
-      r.email.toLowerCase().includes(q) ||
-      r.comment.toLowerCase().includes(q) ||
-      r.product.toLowerCase().includes(q)
-    );
   });
 
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
@@ -356,36 +432,141 @@ function ReviewsTab() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-48">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            id="review-search"
-            placeholder="Search by name, email, product…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <div className="flex gap-1.5">
-          {(["all", "pending", "approved", "rejected"] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium capitalize transition-colors ${
-                statusFilter === s
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border text-muted-foreground hover:bg-secondary"
-              }`}
+      {/* Backend Filters Panel */}
+      <div className="panel p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(["all", "pending", "approved", "rejected"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(s);
+                  setPage(1);
+                }}
+                className={`rounded-full border px-3.5 py-1.5 text-xs font-medium capitalize transition-colors ${
+                  statusFilter === s
+                    ? "border-primary bg-primary text-primary-foreground font-semibold"
+                    : "border-border text-muted-foreground hover:bg-secondary"
+                }`}
+              >
+                {s}
+                {s === "pending" && stats.data?.pending ? ` (${stats.data.pending})` : ""}
+              </button>
+            ))}
+          </div>
+
+          {isFiltered && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={resetFilters}
+              className="h-8 text-xs text-muted-foreground hover:text-foreground gap-1.5"
             >
-              {s}
-              {s === "pending" && stats.data?.pending
-                ? ` (${stats.data.pending})`
-                : ""}
-            </button>
-          ))}
+              <RotateCcw size={13} />
+              Reset filters
+            </Button>
+          )}
         </div>
+
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+          {/* Search */}
+          <div className="relative lg:col-span-2">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="review-search"
+              placeholder="Search name, email, phone, comment…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="pl-8 text-xs h-9 bg-background/50"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setPage(1);
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* Product Category Filter */}
+          <div>
+            <select
+              value={productFilter}
+              onChange={(e) => {
+                setProductFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 w-full rounded-lg border border-border bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              aria-label="Filter by jewellery item"
+            >
+              <option value="all">All Jewellery Items</option>
+              {categoriesQuery.data?.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Rating Filter */}
+          <div>
+            <select
+              value={ratingFilter !== undefined ? String(ratingFilter) : "all"}
+              onChange={(e) => {
+                setRatingFilter(e.target.value === "all" ? undefined : Number(e.target.value));
+                setPage(1);
+              }}
+              className="h-9 w-full rounded-lg border border-border bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              aria-label="Filter by rating"
+            >
+              <option value="all">All Star Ratings</option>
+              <option value="5">⭐⭐⭐⭐⭐ (5 stars)</option>
+              <option value="4">⭐⭐⭐⭐ (4 stars)</option>
+              <option value="3">⭐⭐⭐ (3 stars)</option>
+              <option value="2">⭐⭐ (2 stars)</option>
+              <option value="1">⭐ (1 star)</option>
+            </select>
+          </div>
+
+          {/* Sort Filter */}
+          <div>
+            <select
+              value={sortBy}
+              onChange={(e) => {
+                setSortBy(e.target.value as any);
+                setPage(1);
+              }}
+              className="h-9 w-full rounded-lg border border-border bg-background/50 px-2.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              aria-label="Sort reviews"
+            >
+              <option value="newest">Sort: Newest</option>
+              <option value="oldest">Sort: Oldest</option>
+              <option value="rating_desc">Sort: Highest Rated</option>
+              <option value="rating_asc">Sort: Lowest Rated</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Showing count banner */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+        <span>
+          {totalCount > 0
+            ? `Showing ${startItem}–${endItem} of ${totalCount} reviews`
+            : "No reviews found"}
+        </span>
+        {isFiltered && <span className="italic text-primary/80">Filtered results</span>}
       </div>
 
       {/* Review list */}
@@ -395,14 +576,21 @@ function ReviewsTab() {
         </div>
       )}
 
-      {!reviewsQuery.isLoading && filtered.length === 0 && (
+      {!reviewsQuery.isLoading && reviews.length === 0 && (
         <div className="panel p-8 text-center text-sm text-muted-foreground">
-          {search ? "No reviews match your search." : "No reviews in this category yet."}
+          {isFiltered ? "No reviews match your filter criteria." : "No reviews in this category yet."}
+          {isFiltered && (
+            <div className="mt-3">
+              <Button variant="outline" size="sm" onClick={resetFilters} className="text-xs">
+                Reset filters
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
       <div className="space-y-3">
-        {filtered.map((review) => (
+        {reviews.map((review) => (
           <div key={review.id} className="panel overflow-hidden">
             <div className="flex flex-wrap items-start gap-3 border-b border-border/50 px-4 py-3">
               {/* Header */}
@@ -518,6 +706,87 @@ function ReviewsTab() {
         ))}
       </div>
 
+      {/* Admin Pagination Controls */}
+      {totalCount > 0 && (
+        <div className="panel p-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span>
+              Showing <span className="font-semibold text-foreground">{startItem}</span> to{" "}
+              <span className="font-semibold text-foreground">{endItem}</span> of{" "}
+              <span className="font-semibold text-foreground">{totalCount}</span> reviews
+            </span>
+            <div className="flex items-center gap-1.5 border-l border-border/60 pl-3">
+              <span>Per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 rounded border border-border bg-background px-2 text-xs text-foreground focus:border-primary focus:outline-none"
+                aria-label="Reviews per page"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentPage <= 1 || reviewsQuery.isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="h-8 px-2.5 text-xs gap-1"
+                aria-label="Previous page"
+              >
+                <ChevronLeft size={14} />
+                <span className="hidden sm:inline">Prev</span>
+              </Button>
+
+              {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                typeof p === "number" ? (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setPage(p)}
+                    disabled={reviewsQuery.isFetching}
+                    className={`h-8 min-w-8 rounded-md px-2 text-xs font-medium transition-all ${
+                      currentPage === p
+                        ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                        : "border border-border/80 bg-background text-muted-foreground hover:border-primary/50 hover:bg-secondary hover:text-foreground"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ) : (
+                  <span key={idx} className="px-1 text-xs text-muted-foreground">
+                    …
+                  </span>
+                )
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= totalPages || reviewsQuery.isFetching}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="h-8 px-2.5 text-xs gap-1"
+                aria-label="Next page"
+              >
+                <span className="hidden sm:inline">Next</span>
+                <ChevronRight size={14} />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Edit modal */}
       {editingReview && (
         <EditReviewModal
@@ -552,6 +821,285 @@ function ReviewsTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Hero Banner Tab ────────────────────────────────────────────────────────
+
+function BannerTab() {
+  const queryClient = useQueryClient();
+  const bannerQuery = useQuery({
+    queryKey: ["admin-banner-settings"],
+    queryFn: () => getPublicBannerSettings(),
+  });
+
+  const [imageUrl, setImageUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [subtitle, setSubtitle] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    if (bannerQuery.data) {
+      setImageUrl(bannerQuery.data.imageUrl || "");
+      setTitle(bannerQuery.data.title || "");
+      setSubtitle(bannerQuery.data.subtitle || "");
+    }
+  }, [bannerQuery.data]);
+
+  const updateBanner = useMutation({
+    mutationFn: async () => {
+      let finalUrl = imageUrl.trim();
+
+      if (file) {
+        setIsUploading(true);
+        const base64 = await fileToBase64(file);
+        const res = await uploadImage({
+          data: {
+            base64,
+            mimeType: (file.type || "image/jpeg") as any,
+            filename: file.name,
+          },
+        });
+        finalUrl = res.url;
+        setImageUrl(finalUrl);
+        setFile(null);
+        setPreview(null);
+      }
+
+      await updateBannerSettings({
+        data: {
+          imageUrl: finalUrl || null,
+          title: title.trim() || null,
+          subtitle: subtitle.trim() || null,
+        },
+      });
+    },
+    onSuccess: () => {
+      setIsUploading(false);
+      toast.success("Hero banner updated successfully!");
+      void queryClient.invalidateQueries({ queryKey: ["admin-banner-settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["public-banner-settings"] });
+    },
+    onError: (e: Error) => {
+      setIsUploading(false);
+      toast.error(e.message || "Failed to update banner");
+    },
+  });
+
+  const resetBanner = useMutation({
+    mutationFn: () => resetBannerSettings(),
+    onSuccess: () => {
+      setImageUrl("");
+      setTitle("");
+      setSubtitle("");
+      setFile(null);
+      setPreview(null);
+      toast.success("Banner reset to default image!");
+      void queryClient.invalidateQueries({ queryKey: ["admin-banner-settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["public-banner-settings"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function onPickFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const picked = event.target.files?.[0] ?? null;
+    if (picked && picked.size > 10 * 1024 * 1024) {
+      toast.error("File is larger than 10 MB. Please pick a smaller image.");
+      return;
+    }
+    setFile(picked);
+    setPreview(picked ? URL.createObjectURL(picked) : null);
+  }
+
+  const activeDisplayImg = preview || imageUrl || heroImage;
+
+  return (
+    <div className="space-y-6">
+      {/* Live Preview Panel */}
+      <div className="panel overflow-hidden border-primary/30 shadow-md">
+        <div className="border-b border-border/60 bg-muted/40 px-5 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ImageIcon size={16} className="text-primary" />
+            <span className="text-sm font-semibold">Homepage Hero Banner Live Preview</span>
+          </div>
+          {imageUrl ? (
+            <Badge variant="outline" className="text-emerald-500 border-emerald-500/30 text-[11px]">
+              Custom Banner Active
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-muted-foreground text-[11px]">
+              Default Banner
+            </Badge>
+          )}
+        </div>
+
+        <div className="relative h-60 sm:h-72 w-full overflow-hidden bg-background">
+          <img
+            src={activeDisplayImg}
+            alt="Hero banner preview"
+            className="h-full w-full object-cover transition-all"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/70 to-background/20" />
+          <div className="absolute inset-x-0 bottom-0 p-6 text-center">
+            <p className="text-[10px] uppercase tracking-[0.3em] text-primary font-medium">
+              Haarmonaa · Luxury Handmade Jewellery
+            </p>
+            <h3 className="mt-1 text-2xl font-semibold sm:text-3xl">
+              {title.trim() ? (
+                title
+              ) : (
+                <>
+                  <span className="text-gradient-gold">Customer</span> Reviews & Ratings
+                </>
+              )}
+            </h3>
+            <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground truncate sm:whitespace-normal">
+              {subtitle.trim() ||
+                "Handcrafted with elegance, devotion, and beauty. Tell us about your jewellery piece and share a photo wearing it."}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Banner Edit Form */}
+      <div className="panel p-5 sm:p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Update Banner Media</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Upload a banner photo from your computer or enter an image URL.
+            </p>
+          </div>
+          {(imageUrl || title || subtitle) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (confirm("Reset banner back to the default image and text?")) {
+                  resetBanner.mutate();
+                }
+              }}
+              disabled={resetBanner.isPending}
+              className="text-xs text-destructive border-destructive/30 hover:bg-destructive/10"
+            >
+              <RotateCcw size={13} className="mr-1.5" />
+              Reset to Default
+            </Button>
+          )}
+        </div>
+
+        {/* Upload file input */}
+        <div className="space-y-2">
+          <Label className="text-xs sm:text-sm font-medium">Upload New Banner Photo</Label>
+          {!preview ? (
+            <label
+              htmlFor="banner-file"
+              className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-background/40 p-6 text-center text-xs text-muted-foreground transition-all hover:border-primary/50 hover:bg-secondary/40"
+            >
+              <Upload size={24} className="mb-2 text-primary" />
+              <span className="font-medium text-foreground">Click or tap to upload banner image</span>
+              <span className="text-[11px] text-muted-foreground mt-0.5">
+                Recommended 1600×900 or 1920×1080 (max 10 MB)
+              </span>
+            </label>
+          ) : (
+            <div className="relative inline-block">
+              <img
+                src={preview}
+                alt="Selected banner"
+                className="h-32 w-56 rounded-xl object-cover border border-primary/30 shadow-md"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setFile(null);
+                  setPreview(null);
+                }}
+                className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md transition-transform hover:scale-110"
+                aria-label="Remove uploaded image"
+              >
+                <X size={14} />
+              </button>
+              <p className="mt-1 text-xs text-muted-foreground truncate max-w-xs">{file?.name}</p>
+            </div>
+          )}
+          <input
+            id="banner-file"
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onPickFile}
+          />
+        </div>
+
+        {/* Or direct image URL */}
+        <div className="space-y-1.5">
+          <Label htmlFor="banner-url" className="text-xs sm:text-sm">Or Direct Image URL</Label>
+          <Input
+            id="banner-url"
+            value={imageUrl}
+            onChange={(e) => {
+              setImageUrl(e.target.value);
+              if (file) {
+                setFile(null);
+                setPreview(null);
+              }
+            }}
+            placeholder="https://example.com/banner.jpg or /uploads/custom-banner.jpg"
+            className="text-xs sm:text-sm bg-background/50"
+          />
+        </div>
+
+        {/* Banner Title */}
+        <div className="space-y-1.5">
+          <Label htmlFor="banner-title" className="text-xs sm:text-sm">
+            Banner Heading (Optional)
+          </Label>
+          <Input
+            id="banner-title"
+            value={title}
+            maxLength={200}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Customer Reviews & Ratings (Leave empty for default)"
+            className="text-xs sm:text-sm bg-background/50"
+          />
+        </div>
+
+        {/* Banner Subtitle */}
+        <div className="space-y-1.5">
+          <Label htmlFor="banner-subtitle" className="text-xs sm:text-sm">
+            Banner Subtitle (Optional)
+          </Label>
+          <Textarea
+            id="banner-subtitle"
+            value={subtitle}
+            maxLength={500}
+            rows={2}
+            onChange={(e) => setSubtitle(e.target.value)}
+            placeholder="Handcrafted with elegance, devotion, and beauty... (Leave empty for default)"
+            className="text-xs sm:text-sm bg-background/50"
+          />
+        </div>
+
+        <div className="pt-2">
+          <Button
+            type="button"
+            size="lg"
+            onClick={() => updateBanner.mutate()}
+            disabled={updateBanner.isPending || isUploading}
+            className="w-full sm:w-auto font-medium px-8"
+          >
+            {(updateBanner.isPending || isUploading) && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            {updateBanner.isPending || isUploading ? "Saving Banner..." : "Save Banner Settings"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -668,7 +1216,7 @@ function CategoriesTab() {
 function AdminPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"reviews" | "items">("reviews");
+  const [activeTab, setActiveTab] = useState<"reviews" | "banner" | "items">("reviews");
 
   const stats = useQuery({
     queryKey: ["admin-review-stats"],
@@ -715,7 +1263,7 @@ function AdminPage() {
           onClick={() => setActiveTab("reviews")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
             activeTab === "reviews"
-              ? "bg-background shadow-sm text-foreground"
+              ? "bg-background shadow-sm text-foreground font-semibold"
               : "text-muted-foreground hover:text-foreground"
           }`}
           id="tab-reviews"
@@ -729,10 +1277,22 @@ function AdminPage() {
           ) : null}
         </button>
         <button
+          onClick={() => setActiveTab("banner")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+            activeTab === "banner"
+              ? "bg-background shadow-sm text-foreground font-semibold"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          id="tab-banner"
+        >
+          <ImageIcon size={15} />
+          Hero Banner
+        </button>
+        <button
           onClick={() => setActiveTab("items")}
           className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
             activeTab === "items"
-              ? "bg-background shadow-sm text-foreground"
+              ? "bg-background shadow-sm text-foreground font-semibold"
               : "text-muted-foreground hover:text-foreground"
           }`}
           id="tab-items"
@@ -743,7 +1303,9 @@ function AdminPage() {
       </div>
 
       <div className="mt-6">
-        {activeTab === "reviews" ? <ReviewsTab /> : <CategoriesTab />}
+        {activeTab === "reviews" && <ReviewsTab />}
+        {activeTab === "banner" && <BannerTab />}
+        {activeTab === "items" && <CategoriesTab />}
       </div>
 
       <Link to="/" className="mt-8 inline-block text-sm text-muted-foreground hover:underline">

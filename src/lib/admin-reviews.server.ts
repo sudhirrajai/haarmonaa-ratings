@@ -1,36 +1,124 @@
 import { createServerFn } from "@tanstack/react-start";
-import { eq, desc, asc, and, ne } from "drizzle-orm";
+import { eq, desc, asc, and, or, like, sql, isNotNull, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/lib/db.server";
 import { requireAdminAuth } from "@/lib/auth.server";
 
-// ─── Get all reviews (admin) ──────────────────────────────────────────────────
+// ─── Get all reviews with backend filtering & pagination (admin) ─────────────
 
-const filterSchema = z.object({
+const adminFilterSchema = z.object({
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(10),
   status: z.enum(["all", "pending", "approved", "rejected"]).default("all"),
+  search: z.string().trim().max(100).optional(),
+  rating: z.number().int().min(1).max(5).optional(),
+  product: z.string().trim().max(80).optional(),
+  hasPhoto: z.boolean().optional(),
+  sortBy: z
+    .enum(["newest", "oldest", "rating_desc", "rating_asc"])
+    .default("newest"),
 });
 
 export const adminGetAllReviews = createServerFn({ method: "GET" })
   .middleware([requireAdminAuth])
-  .validator((data: unknown) => filterSchema.parse(data ?? {}))
+  .validator((data: unknown) => adminFilterSchema.parse(data ?? {}))
   .handler(async ({ data }) => {
     const db = getDb();
-    const conditions =
-      data.status !== "all"
-        ? [eq(schema.reviews.status, data.status as "pending" | "approved" | "rejected")]
-        : [];
+    const conditions = [];
 
-    const rows = await db
-      .select()
-      .from(schema.reviews)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(schema.reviews.created_at));
+    if (data.status !== "all") {
+      conditions.push(
+        eq(schema.reviews.status, data.status as "pending" | "approved" | "rejected")
+      );
+    }
 
-    return rows.map((r) => ({
-      ...r,
-      created_at: r.created_at.toISOString(),
-      updated_at: r.updated_at.toISOString(),
-    }));
+    if (data.search) {
+      const q = `%${data.search}%`;
+      conditions.push(
+        or(
+          like(schema.reviews.name, q),
+          like(schema.reviews.email, q),
+          like(schema.reviews.phone, q),
+          like(schema.reviews.product, q),
+          like(schema.reviews.comment, q)
+        )!
+      );
+    }
+
+    if (data.rating && data.rating >= 1 && data.rating <= 5) {
+      conditions.push(eq(schema.reviews.rating, data.rating));
+    }
+
+    if (data.product && data.product !== "all") {
+      conditions.push(eq(schema.reviews.product, data.product));
+    }
+
+    if (data.hasPhoto === true) {
+      conditions.push(
+        and(
+          isNotNull(schema.reviews.image_url),
+          ne(schema.reviews.image_url, "")
+        )!
+      );
+    } else if (data.hasPhoto === false) {
+      conditions.push(
+        or(
+          isNull(schema.reviews.image_url),
+          eq(schema.reviews.image_url, "")
+        )!
+      );
+    }
+
+    let orderByClause;
+    switch (data.sortBy) {
+      case "oldest":
+        orderByClause = [asc(schema.reviews.created_at)];
+        break;
+      case "rating_desc":
+        orderByClause = [desc(schema.reviews.rating), desc(schema.reviews.created_at)];
+        break;
+      case "rating_asc":
+        orderByClause = [asc(schema.reviews.rating), desc(schema.reviews.created_at)];
+        break;
+      case "newest":
+      default:
+        orderByClause = [desc(schema.reviews.created_at)];
+        break;
+    }
+
+    const whereClause = conditions.length ? and(...conditions) : undefined;
+    const offset = (data.page - 1) * data.pageSize;
+
+    const [rows, countResult] = await Promise.all([
+      db
+        .select()
+        .from(schema.reviews)
+        .where(whereClause)
+        .orderBy(...orderByClause)
+        .limit(data.pageSize)
+        .offset(offset),
+      db
+        .select({
+          count: sql<number>`count(*)`,
+        })
+        .from(schema.reviews)
+        .where(whereClause),
+    ]);
+
+    const total = Number(countResult[0]?.count ?? 0);
+    const totalPages = Math.max(1, Math.ceil(total / data.pageSize));
+
+    return {
+      reviews: rows.map((r) => ({
+        ...r,
+        created_at: r.created_at.toISOString(),
+        updated_at: r.updated_at.toISOString(),
+      })),
+      total,
+      totalPages,
+      page: data.page,
+      pageSize: data.pageSize,
+    };
   });
 
 // ─── Approve a review ─────────────────────────────────────────────────────────
